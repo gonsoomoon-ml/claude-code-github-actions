@@ -1,5 +1,30 @@
 # Claude Code Agent Teams CI/CD 동작 원리
 
+## Agent Teams는 어디서 실행되는가?
+
+```
+로컬 머신 (개발자 PC)        GitHub 클라우드              AWS 클라우드
+─────────────────────        ───────────────────          ────────────────
+git push / PR 생성    ──►   GitHub Actions Runner   ──►  Amazon Bedrock
+                             (1회용 Ubuntu VM,             (Claude Sonnet 4.6
+코드 작성, push,             PR마다 자동 생성/삭제)          Agent Teams 실행)
+PR 결과 확인만 함
+                             claude CLI 설치/실행
+                             결과 파싱 및 게시
+```
+
+**핵심:** 로컬 머신은 `git push`로 트리거만 할 뿐, Claude가 코드를 읽고 분석하는
+모든 작업은 GitHub Actions Runner(클라우드 VM)와 Amazon Bedrock(AWS)에서 실행됩니다.
+로컬 머신이 꺼져 있어도 PR이 열려 있으면 리뷰가 자동으로 실행됩니다.
+
+| 위치 | 역할 |
+|------|------|
+| **로컬 머신** | `git push`, PR 생성, 결과 확인 |
+| **GitHub Actions Runner** | `claude` CLI 설치·실행, PR 코멘트 게시 |
+| **Amazon Bedrock (us-west-2)** | Claude Sonnet 4.6 추론, Agent Teams 4개 에이전트 병렬 실행 |
+
+---
+
 ## 전체 동작 흐름
 
 ```
