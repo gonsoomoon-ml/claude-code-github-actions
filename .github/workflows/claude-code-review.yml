@@ -49,10 +49,11 @@ jobs:
             --repo ${{ github.repository }} 2>/dev/null \
             | head -300 \
             || echo "diff를 가져올 수 없습니다.")
+          DELIMITER=$(openssl rand -hex 16)
           {
-            echo "content<<EOF"
+            echo "content<<${DELIMITER}"
             echo "$PR_DIFF"
-            echo "EOF"
+            echo "${DELIMITER}"
           } >> $GITHUB_OUTPUT
 
       - name: Run Agent Teams Review
@@ -86,6 +87,7 @@ jobs:
             > /tmp/stream.jsonl 2>&1
 
       - name: Extract review and post comment
+        if: always()
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
@@ -103,7 +105,6 @@ jobs:
                           obj = json.loads(line)
                           if obj.get('type') == 'result':
                               result = obj.get('result', '')
-                              break
                       except json.JSONDecodeError:
                           pass
           except FileNotFoundError:
