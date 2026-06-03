@@ -216,3 +216,81 @@ GitHub Actions Runner          AWS STS                  Amazon Bedrock
 | **teammateMode: in-process** | 동일 프로세스 내 병렬 에이전트 실행 |
 | **.claude/agents/*.md** | 전문 리뷰어 에이전트 시스템 프롬프트 |
 | **stream-json + Python 파서** | 결과 추출 및 PR 코멘트 게시 |
+
+---
+
+## 실제 테스트 결과 (PR #3)
+
+**테스트 파일:** `app.py` — 의도적 결함 4종 포함  
+**모델:** Claude Sonnet 4.6 on Amazon Bedrock (us-west-2)  
+**결과:** 총 **18개 발견사항** (HIGH: 9, MED: 7, LOW: 2)
+
+```
+app.py 주요 결함:
+  1. SQL 인젝션    — cur.execute("SELECT * FROM users WHERE id = '%s'" % user_id)
+  2. 하드코딩 비밀  — admin_password = "admin1234" / SECRET_KEY = "super-secret-key-..."
+  3. O(n²) 알고리즘 — sum(orders[:i+1]) 매 루프마다 재계산
+  4. SRP 위반      — UserService가 DB·메일·결제·분석 6가지 책임
+```
+
+### 보안 리뷰 (5개 발견사항)
+
+```
+[HIGH] app.py:8   — SQL 인젝션: 문자열 포매팅(%)으로 쿼리 조합
+                    개선: cur.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+[HIGH] app.py:13  — 하드코딩 비밀번호: admin_password = "admin1234"
+                    개선: 환경변수 또는 secrets manager 사용
+[HIGH] app.py:14  — 하드코딩 SECRET_KEY: "super-secret-key-do-not-share"
+                    개선: os.environ["SECRET_KEY"] 로 이동
+[HIGH] app.py:44  — SQL 인젝션 (f-string): f"INSERT INTO users VALUES ('{name}', '{email}')"
+                    개선: 파라미터 바인딩 사용
+[MED]  app.py:11  — 인증 결함: username 파라미터 무시, 비밀번호만 검사
+                    개선: username과 password를 함께 검증
+```
+
+### 성능·품질 리뷰 (4개 발견사항)
+
+```
+[HIGH] app.py:24  — O(n²) 알고리즘: sum(orders[:i+1]) 매 반복 재계산
+                    개선: total += orders[i] 단순 누적으로 O(n) 달성
+[HIGH] app.py:29  — ZeroDivisionError 미처리: return a / b
+                    개선: if b == 0: raise ValueError 또는 return None
+[MED]  app.py:34  — DB 커넥션 미닫음: __init__에서 연결 후 close() 없음
+                    개선: with 문 또는 __del__ 에서 conn.close()
+[LOW]  —           — 코드 전반 타입 힌트 부재 (가독성 개선 기회)
+```
+
+### 테스트 커버리지 리뷰 (4개 발견사항)
+
+```
+[HIGH] app.py:5   — get_user(): 테스트 없음 (SQL 인젝션 핵심 로직)
+[HIGH] app.py:11  — login(): 테스트 없음 (인증 로직)
+[HIGH] app.py:22  — process_orders(): 테스트 없음 (빈 리스트, 음수 케이스 미검증)
+[HIGH] app.py:29  — divide(): 테스트 없음 (b=0 경계값 미검증)
+[MED]  —           — 5개 함수/메서드 모두 테스트 파일 자체가 없음
+```
+
+### 아키텍처 리뷰 (5개 발견사항)
+
+```
+[HIGH] app.py:33  — 단일 책임 원칙(SRP) 위반: UserService가
+                    DB·이메일·결제·분석·캐시·로거 6가지 책임 보유
+                    개선: 각 책임을 별도 서비스로 분리
+[HIGH] app.py:35  — 의존성 역전 원칙(DIP) 위반: sqlite3 직접 생성
+                    개선: 생성자 주입(DI) 패턴 적용
+[HIGH] app.py:44  — 레이어 경계 위반: 비즈니스 로직에서 DB SQL 직접 작성
+                    개선: Repository 패턴 도입
+[MED]  app.py:11  — API 설계 일관성 부재: login(username, password)에서
+                    username 파라미터가 실제로 사용되지 않음
+[LOW]  —           — 메서드 반환 타입 불일치 (True vs fetchall() vs None 혼재)
+```
+
+### 종합
+
+| 에이전트 | HIGH | MED | LOW | 합계 |
+|----------|------|-----|-----|------|
+| security-reviewer | 4 | 1 | 0 | 5 |
+| performance-reviewer | 2 | 1 | 1 | 4 |
+| test-reviewer | 4 | 1 | 0 | 4 (주요 함수 전체 미테스트) |
+| architecture-reviewer | 3 | 1 | 1 | 5 |
+| **합계** | **9** | **7** | **2** | **18** |
