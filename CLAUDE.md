@@ -43,6 +43,11 @@ GitHub Actions는 OIDC JWT Token을 자동 발급 → AWS STS가 Trust Policy �
 | `APP_ID` | GitHub App ID |
 | `APP_PRIVATE_KEY` | GitHub App Private Key (.pem) |
 
+## Language
+
+- 코드 리뷰 및 응답은 한국어로 작성해주세요.
+- 커밋 메시지는 영어로 작성합니다.
+
 ## PR 리뷰 (Agent Teams)
 
 PR 자동 리뷰는 `.claude/agents/`의 4개 전문 에이전트 팀이 병렬로 수행합니다.
@@ -57,11 +62,6 @@ PR 자동 리뷰는 `.claude/agents/`의 4개 전문 에이전트 팀이 병렬�
 | `performance-reviewer` | N+1, 비효율 알고리즘, 중복 코드 |
 | `test-reviewer` | 누락 테스트, 엣지 케이스 |
 | `architecture-reviewer` | 결합도, SOLID, API 설계 |
-
-## Language
-
-- 코드 리뷰 및 응답은 한국어로 작성해주세요.
-- 커밋 메시지는 영어로 작성합니다.
 
 ## Code Style
 
