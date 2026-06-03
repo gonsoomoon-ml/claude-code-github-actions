@@ -1,0 +1,136 @@
+name: Claude Code Review (Agent Teams)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+env:
+  CLAUDE_CODE_USE_BEDROCK: "1"
+  CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
+  ANTHROPIC_MODEL: us.anthropic.claude-sonnet-4-6
+  ANTHROPIC_DEFAULT_HAIKU_MODEL: us.anthropic.claude-sonnet-4-6
+  AWS_REGION: us-west-2
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: us-west-2
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Get PR diff
+        id: diff
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          PR_DIFF=$(gh pr diff ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} 2>/dev/null \
+            | head -300 \
+            || echo "diff를 가져올 수 없습니다.")
+          {
+            echo "content<<EOF"
+            echo "$PR_DIFF"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+      - name: Run Agent Teams Review
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          PROMPT="PR #${{ github.event.pull_request.number }} 코드를 리뷰해주세요.
+
+          PR 제목: ${{ github.event.pull_request.title }}
+
+          변경 내용:
+          ${{ steps.diff.outputs.content }}
+
+          'pr-review' 팀을 구성하여 다음 전문 리뷰어들이 병렬로 분석하도록 해주세요:
+          - security-reviewer
+          - performance-reviewer
+          - test-reviewer
+          - architecture-reviewer
+
+          모든 리뷰어의 분석이 완료되면 결과를 종합하여 마크다운 형식으로 보고해주세요."
+
+          claude -p "$PROMPT" \
+            --settings '{"teammateMode":"in-process"}' \
+            --permission-mode acceptEdits \
+            --allowedTools "Read,Grep,Glob,Bash,TeamCreate,TeamDelete,SendMessage,TaskCreate,TaskUpdate,TaskList,Agent" \
+            --disallowedTools "Task" \
+            --max-budget-usd 3 \
+            --output-format stream-json \
+            --verbose \
+            > /tmp/stream.jsonl 2>&1
+
+      - name: Extract review and post comment
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          REVIEW=$(python3 -c "
+          import json, sys
+
+          result = ''
+          try:
+              with open('/tmp/stream.jsonl') as f:
+                  for line in f:
+                      line = line.strip()
+                      if not line:
+                          continue
+                      try:
+                          obj = json.loads(line)
+                          if obj.get('type') == 'result':
+                              result = obj.get('result', '')
+                              break
+                      except json.JSONDecodeError:
+                          pass
+          except FileNotFoundError:
+              pass
+
+          print(result if result else 'Agent Teams 리뷰를 완료하지 못했습니다.')
+          ")
+
+          COMMENT="## Claude Agent Teams 코드 리뷰
+
+          ${REVIEW}
+
+          ---
+          *Claude Sonnet 4.6 on Amazon Bedrock | Agent Teams (security · performance · test · architecture)*"
+
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} \
+            --body "$COMMENT"
+
+          echo "## Claude Agent Teams 코드 리뷰" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "${REVIEW}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload stream log
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stream-json-pr-${{ github.event.pull_request.number }}
+          path: /tmp/stream.jsonl
+          retention-days: 7
